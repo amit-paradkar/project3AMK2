@@ -4,5 +4,5 @@ fastapi
 python-multipart
 jinja2
 numpy
-opencv-contrib-python-headless==4.5.5.62
+opencv-python==4.5.5.62
 Pillow
