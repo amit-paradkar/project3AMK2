@@ -4,5 +4,6 @@ fastapi
 python-multipart
 jinja2
 numpy
+opencv-python
 opencv-python-headless
 Pillow
