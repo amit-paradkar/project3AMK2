@@ -46,3 +46,6 @@ Deployment
 4) Run command "docker run 8080:8080 project3amk2" to run the container on your local machine
 5) Wait for the FastAPI server starts completely
 6) Point your browser to "http://127.0.0.1:5000"
+
+Predictions
+![alt text](https://github.com/amit-paradkar/project3AMK2/blob/master/prediction.png)
