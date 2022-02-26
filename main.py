@@ -17,15 +17,137 @@ import io as StringIO
 from io import BytesIO
 import json
 import os
+from imutils.video import VideoStream
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+import threading
+import imutils
+import time
+import cv2
+import uvicorn
+from multiprocessing import Process, Queue
+import subprocess
+import numpy as np
 
 app = FastAPI()
 
+manager = None
+count_keep_alive = 0
+
+width = 1280
+height = 720
+lock = threading.Lock()
 confthres = 0.3
 nmsthres = 0.1
 yolo_path = './static'
 labelsPath="configuration/obj.names"
 cfgpath="configuration/yolo-obj.cfg"
 wpath="weights/yolo-obj_best.weights"
+TRAFFIC_FEED_URL = "https://wzmedia.dot.ca.gov/D5/1atHarkinsSloughRd.stream/playlist.m3u8"
+
+'''
+
+cap = cv2.VideoCapture(args['input'])
+# get the video frame height and width
+frame_width = int(cap.get(3))
+frame_height = int(cap.get(4))
+save_name = f"outputs/{args['input'].split('/')[-1]}"
+# define codec and create VideoWriter object
+out = cv2.VideoWriter(
+    save_name,
+    cv2.VideoWriter_fourcc(*'mp4v'), 10, 
+    (frame_width, frame_height)
+)
+
+while (cap.isOpened()):
+    ret, frame = cap.read()
+    if ret == True:
+        frame_count += 1
+        orig_frame = frame.copy()
+        # IMPORTANT STEP: convert the frame to grayscale first
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if frame_count % consecutive_frame == 0 or frame_count == 1:
+            frame_diff_list = []
+        # find the difference between current frame and base frame
+        frame_diff = cv2.absdiff(gray, background)
+        # thresholding to convert the frame to binary
+        ret, thres = cv2.threshold(frame_diff, 50, 255, cv2.THRESH_BINARY)
+        # dilate the frame a bit to get some more white area...
+        # ... makes the detection of contours a bit easier
+        dilate_frame = cv2.dilate(thres, None, iterations=2)
+        # append the final result into the `frame_diff_list`
+        frame_diff_list.append(dilate_frame)
+        # if we have reached `consecutive_frame` number of frames
+        if len(frame_diff_list) == consecutive_frame:
+            # add all the frames in the `frame_diff_list`
+            sum_frames = sum(frame_diff_list)
+            # find the contours around the white segmented areas
+            contours, hierarchy = cv2.findContours(sum_frames, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # draw the contours, not strictly necessary
+            for i, cnt in enumerate(contours):
+                cv2.drawContours(frame, contours, i, (0, 0, 255), 3)
+            for contour in contours:
+                # continue through the loop if contour area is less than 500...
+                # ... helps in removing noise detection
+                if cv2.contourArea(contour) < 500:
+                    continue
+                # get the xmin, ymin, width, and height coordinates from the contours
+                (x, y, w, h) = cv2.boundingRect(contour)
+                # draw the bounding boxes
+                cv2.rectangle(orig_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+        
+            cv2.imshow('Detected Objects', orig_frame)
+            out.write(orig_frame)
+            if cv2.waitKey(100) & 0xFF == ord('q'):
+                break
+    else:
+        break
+cap.release()
+cv2.destroyAllWindows()
+'''
+
+def start_stream(TRAFFIC_FEED_URL, manager):
+    global width
+    global height
+
+    vs = VideoStream(TRAFFIC_FEED_URL).start()
+    while True:
+        time.sleep(0.2)
+
+        frame = vs.read()
+        frame = imutils.resize(frame, width=680)
+        output_frame = frame.copy()
+
+        if output_frame is None:
+            continue
+        (flag, encodedImage) = cv2.imencode(".jpg", output_frame)
+        if not flag:
+            continue
+        manager.put(encodedImage)
+
+
+def streamer():
+    try:
+        while manager:
+            yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' +
+                   bytearray(manager.get()) + b'\r\n')
+    except GeneratorExit:
+        print("cancelled")
+
+
+def manager_keep_alive(p):
+    global count_keep_alive
+    global manager
+    while count_keep_alive:
+        time.sleep(1)
+        print(count_keep_alive)
+        count_keep_alive -= 1
+    p.kill()
+    time.sleep(.5)
+    p.close()
+    manager.close()
+    manager = None
+
 
 def get_labels(labels_path):
     lpath=os.path.sep.join([yolo_path, labels_path])
@@ -87,6 +209,7 @@ def get_predection(image,net,LABELS,COLORS):
     print(layerOutputs)
     end = time.time()
 
+    prediction_time = end - start
     # show timing information on YOLO
     print("[INFO] YOLO took {:.6f} seconds".format(end - start))
 
@@ -149,8 +272,28 @@ def get_predection(image,net,LABELS,COLORS):
             print(boxes)
             print(classIDs)
             cv2.putText(image, text, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX,0.5, color, 2)
-    return image
+    return prediction_time, image
 
+def generate():
+    # grab global references to the output frame and lock variables
+    global outputFrame, lock
+    # loop over frames from the output stream
+    while True:
+        # wait until the lock is acquired
+        with lock:
+            # check if the output frame is available, otherwise skip
+            # the iteration of the loop
+            if outputFrame is None:
+                continue
+            # encode the frame in JPEG format
+            (flag, encodedImage) = cv2.imencode(".jpg", outputFrame)
+            # ensure the frame was successfully encoded
+            if not flag:
+                continue
+        # yield the output frame in the byte format
+        #yield b''+bytearray(encodedImage)
+        yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' +
+               bytearray(encodedImage) + b'\r\n')
 
 labelsPath="model/configuration/obj.names"
 cfgpath="model/configuration/yolo-obj.cfg"
@@ -160,10 +303,236 @@ CFG=get_config(cfgpath)
 Weights=get_weights(wpath)
 nets=load_model(CFG,Weights)
 Colors=get_colors(Lables)
-
+IP_CAMERA_RESOLUTION = (640, 360)
 templates = Jinja2Templates(directory="templates")
+cap = cv2.VideoCapture(TRAFFIC_FEED_URL)
+
+cap.set(cv2.CAP_PROP_BUFFERSIZE,1)
+print(cv2.getBuildInformation())
+# Find OpenCV version
+major_ver, minor_ver, subminor_ver = (cv2.__version__).split('.')
+
+FEED_FPS =0
+
+if int(major_ver)  < 3 :
+    FEED_FPS = cap.get(cv2.cv.CV_CAP_PROP_FPS)
+    print("Frames per second using video.get(cv2.cv.CV_CAP_PROP_FPS): {0}".format(FEED_FPS))
+else :
+    FEED_FPS = cap.get(cv2.CAP_PROP_FPS)
+    print("Frames per second using video.get(cv2.CAP_PROP_FPS) : {0}".format(FEED_FPS))
+
+def generate():
+    try:
+        while True:
+            ret, image_np = cap.read()
+            print("***Imageread***")
+            # Expand dimensions since the model expects images to have shape: [1, None, None, 3]
+            '''
+            img = Image.open(io.BytesIO(img))
+            npimg=np.array(img)
+            image=npimg.copy()
+            image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
+            res=get_predection(image,nets,Lables,Colors)
+            image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
+            image=cv2.cvtColor(res,cv2.COLOR_BGR2RGB)
+            np_img=Image.fromarray(image)
+            img_encoded=image_to_byte_array(np_img)  
+            img_bin = io.BytesIO(img_encoded)
+            '''
+            
+            image_np_expanded = np.expand_dims(image_np, axis=0)
+            print("***Image expanded***")
+            image=cv2.cvtColor(image_np_expanded,cv2.COLOR_BGR2RGB)
+            print("***cvtColot expanded image***")
+            # Actual detection.
+            res=get_predection(image,nets,Lables,Colors)
+            print("***Image after prediction***")
+            #image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
+            image=cv2.cvtColor(res,cv2.COLOR_BGR2RGB)
+            print("***Image after cvtColor***")
+            np_img=Image.fromarray(image)
+            print("***Image fromarray***")
+            img_encoded=image_to_byte_array(np_img)
+            print("***Image to byte array**")
+            img_bin = io.BytesIO(img_encoded)
+            print("***Image BytesIOs***")
+
+            #output_dict = run_inference_for_single_image(image_np, detection_graph)
+            # Visualization of the results of a detection.
+            '''
+            vis_util.visualize_boxes_and_labels_on_image_array(
+                image_np,
+                output_dict['detection_boxes'],
+                output_dict['detection_classes'],
+                output_dict['detection_scores'],
+                category_index,
+                instance_masks=output_dict.get('detection_masks'),
+                use_normalized_coordinates=True,
+                line_thickness=4)
+            '''
+            cv2.imshow('object_detection', cv2.resize(img_bin, IP_CAMERA_RESOLUTION))
+            if cv2.waitKey(25) & 0xFF == ord('q'):
+                cap.release()
+                cv2.destroyAllWindows()
+                break
+    except cv2.error as e:
+        print("@@@@@@Exception in cv2:@@@@@@@@", e)
+        cap.release()
+
+def gen(camera):
+    """Video streaming generator function."""
+    while True:
+        frame = camera.get_frame()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+
+
+#WORKING Solution with cv2.imshow -> display in python
+def just_stream():
+    myFrameNumber = 50
+    #cap = cv2.VideoCapture("video.mp4")
+
+    # get total number of frames
+    totalFrames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+
+    # check for valid frame number
+    if myFrameNumber >= 0 & myFrameNumber <= totalFrames:
+        # set frame position
+        cap.set(cv2.CAP_PROP_POS_FRAMES,myFrameNumber)
+
+    prev_frame_time =0
+    curr_frame_time=0
+    font = cv2.FONT_HERSHEY_COMPLEX
+
+    #cap.set(cv2.CAP_PROP_FPS,20) 
+    count = 0
+    while True:
+        if (count > 10):
+            ret, frame = cap.read()
+            #print("Frame dimention", frame.shape)
+            count = 0
+            #npimg=np.array(img)
+            image=frame.copy()
+            image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
+            prediction_time, res=get_predection(image,nets,Lables,Colors)
+            image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
+            image=cv2.cvtColor(res,cv2.COLOR_BGR2RGB)
+            #np_img=Image.fromarray(image)
+            #img_encoded=image_to_byte_array(np_img)  
+            curr_frame_time = time.time()
+            fps= 1/(curr_frame_time - prev_frame_time)
+            prev_frame_time = curr_frame_time
+            feed = FEED_FPS
+            frame_lag = (feed - fps) * 60
+            time_lag = frame_lag/fps
+            #fps=int(fps)
+            #fps=str(fps)
+            
+            cv2.putText(image, "prediction fps:"+ str(round(fps,1)), (7, 100), font, 1, (100, 255, 0), 3, cv2.LINE_AA)
+            cv2.putText(image, "time taken for prediction:" + str(round(prediction_time,2)) + " (seconds)", (7, 150), font, 1, (100, 255, 0), 3, cv2.LINE_AA)
+            cv2.putText(image, "live feed fps:"+ str(int(FEED_FPS)), (7, 200), font, 1, (100, 255, 0), 3, cv2.LINE_AA)
+            cv2.putText(image, "Current Frame Lag:"+ str(int(frame_lag)), (7, 250), font, 1, (100, 255, 0), 3, cv2.LINE_AA)
+            cv2.putText(image, "Current Time lag: "+ str(round(time_lag,2))+ " (seconds)", (7, 300), font, 1, (100, 255, 0), 3, cv2.LINE_AA)
+
+
+            cv2.imshow("Video", image)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        count = count+ 1
+
+    cv2.destroyAllWindows()
+    cap.release()
+
+@staticmethod
+def __draw_label(img, text, pos, bg_color):
+    font_face = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.4
+    color = (0, 0, 0)
+    thickness = cv2.FILLED
+    margin = 2
+
+    txt_size = cv2.getTextSize(text, font_face, scale, thickness)
+
+    end_x = pos[0] + txt_size[0][0] + margin
+    end_y = pos[1] - txt_size[0][1] - margin
+
+    cv2.rectangle(img, pos, (end_x, end_y), bg_color, thickness)
+    cv2.putText(img, text, pos, font_face, scale, color, 1, cv2.LINE_AA)
+
+'''def just_stream():
+    # grab global references to the output frame and lock variables
+    global outputFrame, lock
+    # loop over frames from the output stream
+    while True:
+        ret, outputFrame = cap.read()
+        # wait until the lock is acquired
+        with lock:
+            # check if the output frame is available, otherwise skip
+            # the iteration of the loop
+            if outputFrame is None:
+                continue
+
+            image=outputFrame.copy()
+            image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
+            res=get_predection(image,nets,Lables,Colors)
+            image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
+            image=cv2.cvtColor(res,cv2.COLOR_BGR2RGB)
+
+            #__draw_label(image, 'Hello World', (20,20), (255,0,0))
+
+            # encode the frame in JPEG format
+            (flag, encodedImage) = cv2.imencode(".jpg", image)
+            # ensure the frame was successfully encoded
+            if not flag:
+                continue
+        # yield the output frame in the byte format
+        yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' +
+               bytearray(encodedImage) + b'\r\n')
+'''
+
+@app.get("/")
+async def landing_page(request: Request):
+  return templates.TemplateResponse("index-stream-video.html", {"request": request})
+
+@app.get("/stream_video")
+async def stream_video():
+    return StreamingResponse(just_stream(), media_type="multipart/x-mixed-replace;boundary=frame")
+
+'''
+PARTIALLY WORKING with CV2 IMSHOW
+@app.get("/stream_video")
+async def stream_video():
+    return StreamingResponse(just_stream(), media_type="multipart/x-mixed-replace;boundary=frame")
+'''
 
     
+
+'''@app.get("/stream_video")
+async def stream_video():
+    return StreamingResponse(streamer(), media_type="multipart/x-mixed-replace;boundary=frame")
+'''
+
+@app.get("/keep-alive")
+def keep_alive():
+    global manager
+    global count_keep_alive
+    count_keep_alive = 100
+    if not manager:
+        manager = Queue()
+        p = Process(target=start_stream, args=(url_rtsp, manager,))
+        p.start()
+        threading.Thread(target=manager_keep_alive, args=(p,)).start()
+
+'''
+@app.get("/stream_video")
+def stream_video():
+    # return the response generated along with the specific media
+    # type (mime type)
+    # return StreamingResponse(generate())
+    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace;boundary=frame")
+'''
+'''
 @app.get("/")
 async def landing_page(request: Request):
   return templates.TemplateResponse("index.html", {"request": request})
@@ -192,6 +561,7 @@ async def traffic_object_recognition(request: Request,file: UploadFile):
     #return StreamingResponse(io.BytesIO(img_encoded),media_type="image/jpeg")
     return StreamingResponse(img_bin,media_type="image/jpeg")
     #return templates.TemplateResponse("index.html", {"request": request,"image":img_bin})
-
+'''
 if __name__ == '__main__':
-    uvicorn.run(app, host='127.0.0.1', port=8000, debug=True)
+    #uvicorn.run(app, host='127.0.0.1', port=8000, debug=True)
+    uvicorn.run("main:app", host='0.0.0.0', port=8080, debug=True)
