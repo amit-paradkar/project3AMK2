@@ -8,6 +8,7 @@ Detect object tagging in the video and examine how parallel object detection on 
 Object Detection Algorithm: Yolo v4
 Open source object detector : [Alexy AB darknet](https://github.com/AlexeyAB/darknet)
 Initial Weights file : yolov4.conv.137
+Deployment: FastAPI in Docker Container 
 
 Model Training
 Colab notebook: [driver.ipynb](https://github.com/amit-paradkar/project3AMK2/blob/master/driver.ipynb)
