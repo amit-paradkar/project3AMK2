@@ -65,7 +65,6 @@ def start_stream(TRAFFIC_FEED_URL, manager):
             continue
         manager.put(encodedImage)
 
-
 def streamer():
     try:
         while manager:
@@ -73,7 +72,6 @@ def streamer():
                    bytearray(manager.get()) + b'\r\n')
     except GeneratorExit:
         print("cancelled")
-
 
 def manager_keep_alive(p):
     global count_keep_alive
@@ -87,7 +85,6 @@ def manager_keep_alive(p):
     p.close()
     manager.close()
     manager = None
-
 
 def get_labels(labels_path):
     lpath=os.path.sep.join([yolo_path, labels_path])
@@ -132,15 +129,8 @@ def get_predection(image,net,LABELS,COLORS):
     # determine only the *output* layer names that we need from YOLO
     ln = net.getLayerNames()
     
-    '''
-    if (torch.cuda.is_available()):
-        ln = [ln[i[0] - 1] for i in net.getUnconnectedOutLayers()]
-    else:
-    '''
     ln = [ln[i - 1] for i in net.getUnconnectedOutLayers()]
-    # construct a blob from the input image and then perform a forward
-    # pass of the YOLO object detector, giving us our bounding boxes and
-    # associated probabilities
+   
     blob = cv2.dnn.blobFromImage(image, 1 / 255.0, (416, 416),
                                  swapRB=True, crop=False)
     net.setInput(blob)
@@ -150,21 +140,15 @@ def get_predection(image,net,LABELS,COLORS):
     end = time.time()
 
     prediction_time = end - start
-    # show timing information on YOLO
+
     print("[INFO] YOLO took {:.6f} seconds".format(end - start))
 
-    # initialize our lists of detected bounding boxes, confidences, and
-    # class IDs, respectively
     boxes = []
     confidences = []
     classIDs = []
-
     # loop over each of the layer outputs
     for output in layerOutputs:
-        # loop over each of the detections
         for detection in output:
-            # extract the class ID and confidence (i.e., probability) of
-            # the current object detection
             scores = detection[5:]
             # print(scores)
             classID = np.argmax(scores)
@@ -196,7 +180,6 @@ def get_predection(image,net,LABELS,COLORS):
     # boxes
     idxs = cv2.dnn.NMSBoxes(boxes, confidences, confthres,
                             nmsthres)
-
     # ensure at least one detection exists
     if len(idxs) > 0:
         # loop over the indexes we are keeping
@@ -266,19 +249,6 @@ def generate():
         while True:
             ret, image_np = cap.read()
             print("***Imageread***")
-            # Expand dimensions since the model expects images to have shape: [1, None, None, 3]
-            '''
-            img = Image.open(io.BytesIO(img))
-            npimg=np.array(img)
-            image=npimg.copy()
-            image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
-            res=get_predection(image,nets,Lables,Colors)
-            image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
-            image=cv2.cvtColor(res,cv2.COLOR_BGR2RGB)
-            np_img=Image.fromarray(image)
-            img_encoded=image_to_byte_array(np_img)  
-            img_bin = io.BytesIO(img_encoded)
-            '''
             
             image_np_expanded = np.expand_dims(image_np, axis=0)
             print("***Image expanded***")
@@ -332,36 +302,28 @@ def just_stream():
     curr_frame_time=0
     font = cv2.FONT_HERSHEY_COMPLEX
 
-    #cap.set(cv2.CAP_PROP_FPS,20) 
     count = 0
     while True:
         if (count > 10):
             ret, frame = cap.read()
-            #print("Frame dimention", frame.shape)
             count = 0
-            #npimg=np.array(img)
             image=frame.copy()
             image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
             prediction_time, res=get_predection(image,nets,Lables,Colors)
             image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
             image=cv2.cvtColor(res,cv2.COLOR_BGR2RGB)
-            #np_img=Image.fromarray(image)
-            #img_encoded=image_to_byte_array(np_img)  
             curr_frame_time = time.time()
             fps= 1/(curr_frame_time - prev_frame_time)
             prev_frame_time = curr_frame_time
             feed = FEED_FPS
             frame_lag = (feed - fps) * 60
             time_lag = frame_lag/fps
-            #fps=int(fps)
-            #fps=str(fps)
             
             cv2.putText(image, "prediction fps:"+ str(round(fps,1)), (7, 100), font, 1, (100, 255, 0), 3, cv2.LINE_AA)
             cv2.putText(image, "time taken for prediction:" + str(round(prediction_time,2)) + " (seconds)", (7, 150), font, 1, (100, 255, 0), 3, cv2.LINE_AA)
             cv2.putText(image, "live feed fps:"+ str(int(FEED_FPS)), (7, 200), font, 1, (100, 255, 0), 3, cv2.LINE_AA)
             cv2.putText(image, "Current Frame Lag:"+ str(int(frame_lag)), (7, 250), font, 1, (100, 255, 0), 3, cv2.LINE_AA)
             cv2.putText(image, "Current Time lag: "+ str(round(time_lag,2))+ " (seconds)", (7, 300), font, 1, (100, 255, 0), 3, cv2.LINE_AA)
-
 
             cv2.imshow("Video", image)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -396,7 +358,6 @@ async def landing_page(request: Request):
 async def stream_video():
     return StreamingResponse(just_stream(), media_type="multipart/x-mixed-replace;boundary=frame")
 
-
 @app.get("/keep-alive")
 def keep_alive():
     global manager
@@ -409,5 +370,4 @@ def keep_alive():
         threading.Thread(target=manager_keep_alive, args=(p,)).start()
 
 if __name__ == '__main__':
-    #uvicorn.run(app, host='127.0.0.1', port=8000, debug=True)
     uvicorn.run("main:app", host='0.0.0.0', port=8080, debug=True)
