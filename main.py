@@ -45,66 +45,6 @@ cfgpath="configuration/yolo-obj.cfg"
 wpath="weights/yolo-obj_best.weights"
 TRAFFIC_FEED_URL = "https://wzmedia.dot.ca.gov/D5/1atHarkinsSloughRd.stream/playlist.m3u8"
 
-'''
-
-cap = cv2.VideoCapture(args['input'])
-# get the video frame height and width
-frame_width = int(cap.get(3))
-frame_height = int(cap.get(4))
-save_name = f"outputs/{args['input'].split('/')[-1]}"
-# define codec and create VideoWriter object
-out = cv2.VideoWriter(
-    save_name,
-    cv2.VideoWriter_fourcc(*'mp4v'), 10, 
-    (frame_width, frame_height)
-)
-
-while (cap.isOpened()):
-    ret, frame = cap.read()
-    if ret == True:
-        frame_count += 1
-        orig_frame = frame.copy()
-        # IMPORTANT STEP: convert the frame to grayscale first
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        if frame_count % consecutive_frame == 0 or frame_count == 1:
-            frame_diff_list = []
-        # find the difference between current frame and base frame
-        frame_diff = cv2.absdiff(gray, background)
-        # thresholding to convert the frame to binary
-        ret, thres = cv2.threshold(frame_diff, 50, 255, cv2.THRESH_BINARY)
-        # dilate the frame a bit to get some more white area...
-        # ... makes the detection of contours a bit easier
-        dilate_frame = cv2.dilate(thres, None, iterations=2)
-        # append the final result into the `frame_diff_list`
-        frame_diff_list.append(dilate_frame)
-        # if we have reached `consecutive_frame` number of frames
-        if len(frame_diff_list) == consecutive_frame:
-            # add all the frames in the `frame_diff_list`
-            sum_frames = sum(frame_diff_list)
-            # find the contours around the white segmented areas
-            contours, hierarchy = cv2.findContours(sum_frames, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            # draw the contours, not strictly necessary
-            for i, cnt in enumerate(contours):
-                cv2.drawContours(frame, contours, i, (0, 0, 255), 3)
-            for contour in contours:
-                # continue through the loop if contour area is less than 500...
-                # ... helps in removing noise detection
-                if cv2.contourArea(contour) < 500:
-                    continue
-                # get the xmin, ymin, width, and height coordinates from the contours
-                (x, y, w, h) = cv2.boundingRect(contour)
-                # draw the bounding boxes
-                cv2.rectangle(orig_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-        
-            cv2.imshow('Detected Objects', orig_frame)
-            out.write(orig_frame)
-            if cv2.waitKey(100) & 0xFF == ord('q'):
-                break
-    else:
-        break
-cap.release()
-cv2.destroyAllWindows()
-'''
 
 def start_stream(TRAFFIC_FEED_URL, manager):
     global width
@@ -357,19 +297,6 @@ def generate():
             img_bin = io.BytesIO(img_encoded)
             print("***Image BytesIOs***")
 
-            #output_dict = run_inference_for_single_image(image_np, detection_graph)
-            # Visualization of the results of a detection.
-            '''
-            vis_util.visualize_boxes_and_labels_on_image_array(
-                image_np,
-                output_dict['detection_boxes'],
-                output_dict['detection_classes'],
-                output_dict['detection_scores'],
-                category_index,
-                instance_masks=output_dict.get('detection_masks'),
-                use_normalized_coordinates=True,
-                line_thickness=4)
-            '''
             cv2.imshow('object_detection', cv2.resize(img_bin, IP_CAMERA_RESOLUTION))
             if cv2.waitKey(25) & 0xFF == ord('q'):
                 cap.release()
@@ -460,36 +387,6 @@ def __draw_label(img, text, pos, bg_color):
     cv2.rectangle(img, pos, (end_x, end_y), bg_color, thickness)
     cv2.putText(img, text, pos, font_face, scale, color, 1, cv2.LINE_AA)
 
-'''def just_stream():
-    # grab global references to the output frame and lock variables
-    global outputFrame, lock
-    # loop over frames from the output stream
-    while True:
-        ret, outputFrame = cap.read()
-        # wait until the lock is acquired
-        with lock:
-            # check if the output frame is available, otherwise skip
-            # the iteration of the loop
-            if outputFrame is None:
-                continue
-
-            image=outputFrame.copy()
-            image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
-            res=get_predection(image,nets,Lables,Colors)
-            image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
-            image=cv2.cvtColor(res,cv2.COLOR_BGR2RGB)
-
-            #__draw_label(image, 'Hello World', (20,20), (255,0,0))
-
-            # encode the frame in JPEG format
-            (flag, encodedImage) = cv2.imencode(".jpg", image)
-            # ensure the frame was successfully encoded
-            if not flag:
-                continue
-        # yield the output frame in the byte format
-        yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' +
-               bytearray(encodedImage) + b'\r\n')
-'''
 
 @app.get("/")
 async def landing_page(request: Request):
@@ -499,19 +396,6 @@ async def landing_page(request: Request):
 async def stream_video():
     return StreamingResponse(just_stream(), media_type="multipart/x-mixed-replace;boundary=frame")
 
-'''
-PARTIALLY WORKING with CV2 IMSHOW
-@app.get("/stream_video")
-async def stream_video():
-    return StreamingResponse(just_stream(), media_type="multipart/x-mixed-replace;boundary=frame")
-'''
-
-    
-
-'''@app.get("/stream_video")
-async def stream_video():
-    return StreamingResponse(streamer(), media_type="multipart/x-mixed-replace;boundary=frame")
-'''
 
 @app.get("/keep-alive")
 def keep_alive():
@@ -524,44 +408,6 @@ def keep_alive():
         p.start()
         threading.Thread(target=manager_keep_alive, args=(p,)).start()
 
-'''
-@app.get("/stream_video")
-def stream_video():
-    # return the response generated along with the specific media
-    # type (mime type)
-    # return StreamingResponse(generate())
-    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace;boundary=frame")
-'''
-'''
-@app.get("/")
-async def landing_page(request: Request):
-  return templates.TemplateResponse("index.html", {"request": request})
-
-@app.post("/files/", status_code=201,response_class=HTMLResponse) 
-async def traffic_object_recognition(request: Request,file: UploadFile):
-    
-    img = await file.read()
-    
-    img = Image.open(io.BytesIO(img))
-    
-    npimg=np.array(img)
-    
-    image=npimg.copy()
-    
-    image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
-    
-    res=get_predection(image,nets,Lables,Colors)
-    
-    image=cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
-    image=cv2.cvtColor(res,cv2.COLOR_BGR2RGB)
-    
-    np_img=Image.fromarray(image)
-    img_encoded=image_to_byte_array(np_img)  
-    img_bin = io.BytesIO(img_encoded)
-    #return StreamingResponse(io.BytesIO(img_encoded),media_type="image/jpeg")
-    return StreamingResponse(img_bin,media_type="image/jpeg")
-    #return templates.TemplateResponse("index.html", {"request": request,"image":img_bin})
-'''
 if __name__ == '__main__':
     #uvicorn.run(app, host='127.0.0.1', port=8000, debug=True)
     uvicorn.run("main:app", host='0.0.0.0', port=8080, debug=True)
