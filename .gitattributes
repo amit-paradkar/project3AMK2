@@ -1,3 +1,2 @@
 static/model/weights/yolo-obj_last.weights filter=lfs diff=lfs merge=lfs -text
 src/static/model/weights/yolo-obj_last.weight filter=lfs diff=lfs merge=lfs -text
-src/static/model/weights/yolo-obj_last.weights.gz filter=lfs diff=lfs merge=lfs -text
